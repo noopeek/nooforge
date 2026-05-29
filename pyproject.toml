@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nooforge"
+version = "1.0.0"
+description = "Forje skills para IA com um comando"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [{name = "noopeek", email = "noopeek@example.com"}]
+dependencies = []
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+
+[project.optional-dependencies]
+rich = ["rich>=10.0"]
+yaml = ["PyYAML>=5.0"]
+
+[project.urls]
+Homepage = "https://github.com/noopeek/nooforge"
+
+[project.scripts]
+nooforge = "nooforge.__main__:main"
