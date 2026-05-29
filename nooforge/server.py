@@ -11,6 +11,7 @@ from nooforge.core.constants import (
 
 _cache = {"ts": 0.0, "data": []}
 
+
 def collect_skills() -> List[Dict[str, str]]:
     now = time.time()
     if now - _cache["ts"] < CACHE_TTL:
@@ -34,26 +35,102 @@ def collect_skills() -> List[Dict[str, str]]:
     _cache["data"] = skills
     return skills
 
+
+def _json_response(handler: "NooForgeHandler", status: int, payload: dict) -> None:
+    raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    handler.send_response(status)
+    handler.send_header("Content-Type", "application/json; charset=utf-8")
+    handler.send_header("Content-Length", str(len(raw)))
+    handler.end_headers()
+    handler.wfile.write(raw)
+
+
 class NooForgeHandler(BaseHTTPRequestHandler):
+
+    # ------------------------------------------------------------------
+    # GET
+    # ------------------------------------------------------------------
     def do_GET(self):
-        if self.path == "/mcp":
-            payload = {"skills": collect_skills(), "count": len(collect_skills())}
-            raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.send_header("Content-Length", str(len(raw)))
+        if self.path == "/health":
+            _json_response(self, 200, {"status": "ok"})
+        elif self.path in ("/skills", "/mcp"):
+            skills = collect_skills()
+            _json_response(self, 200, {"skills": skills, "count": len(skills)})
+        else:
+            self.send_response(404)
             self.end_headers()
-            self.wfile.write(raw)
+
+    # ------------------------------------------------------------------
+    # POST — JSON-RPC 2.0 MCP
+    # ------------------------------------------------------------------
+    def do_POST(self):
+        if self.path != "/mcp":
+            self.send_response(404)
+            self.end_headers()
             return
-        self.send_response(404)
-        self.end_headers()
+
+        length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(length) if length else b"{}"
+
+        try:
+            req = json.loads(body)
+        except json.JSONDecodeError:
+            _json_response(self, 400, {
+                "jsonrpc": "2.0", "id": None,
+                "error": {"code": -32700, "message": "parse error"}
+            })
+            return
+
+        rpc_id = req.get("id")
+        method = req.get("method", "")
+        params = req.get("params", {})
+
+        # --- list_skills ---
+        if method == "list_skills":
+            skills = collect_skills()
+            _json_response(self, 200, {
+                "jsonrpc": "2.0", "id": rpc_id,
+                "result": {"skills": skills, "count": len(skills)}
+            })
+
+        # --- get_skill ---
+        elif method == "get_skill":
+            slug = params.get("slug", "") or params.get("id", "")
+            skills = collect_skills()
+            match = next((s for s in skills if s["id"] == slug), None)
+            if match:
+                try:
+                    content = open(match["path"], encoding="utf-8").read()
+                except OSError as exc:
+                    _json_response(self, 200, {
+                        "jsonrpc": "2.0", "id": rpc_id,
+                        "error": {"code": -32603, "message": str(exc)}
+                    })
+                    return
+                _json_response(self, 200, {
+                    "jsonrpc": "2.0", "id": rpc_id,
+                    "result": {**match, "content": content}
+                })
+            else:
+                _json_response(self, 200, {
+                    "jsonrpc": "2.0", "id": rpc_id,
+                    "error": {"code": -32602, "message": f"skill '{slug}' not found"}
+                })
+
+        # --- method not found ---
+        else:
+            _json_response(self, 200, {
+                "jsonrpc": "2.0", "id": rpc_id,
+                "error": {"code": -32601, "message": f"method '{method}' not found"}
+            })
 
     def log_message(self, fmt, *args):
         return
 
+
 def serve(port: int) -> None:
     server = HTTPServer(("127.0.0.1", port), NooForgeHandler)
-    print(f"Servidor MCP rodando em http://127.0.0.1:{port}/mcp")
+    print(f"servidor mcp em http://127.0.0.1:{port}/mcp")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
